@@ -1,10 +1,10 @@
 #!/usr/bin/env julia
 #=
-Cysteine enrichment steering experiment
-========================================
+Cysteine enrichment steering experiment (ordinal reward)
+=========================================================
 Generates proteins with and without DTS* reward steering,
-where the reward is 1 if the sequence contains more than 7
-cysteine residues, and 0 otherwise. Produces a comparison plot.
+where the reward is the cysteine count / 40 (continuous,
+ordinal signal). Produces a comparison plot.
 =#
 
 using Pkg
@@ -33,7 +33,7 @@ has_enough_cys(seq::String) = cysteine_count(seq) > 7
 
 function cysteine_reward(g)
     seqs = extract_sequences(g)
-    return any(has_enough_cys, seqs) ? 1.0 : 0.0
+    return maximum(cysteine_count, seqs) / 40.0
 end
 
 # ─── Generation ──────────────────────────────────────────────────────────────
@@ -84,19 +84,20 @@ function print_report(uncond_seqs, cond_seqs)
     u = count_hits(uncond_seqs)
     c = count_hits(cond_seqs)
 
-    println("\n" * "="^60)
-    println("       Cysteine Enrichment (>7 Cys) Report")
-    println("="^60)
-    println()
-    println("  Unconditional:  $(u.n_with)/$(length(uncond_seqs)) sequences with >7 Cys ($(round(u.frac*100, digits=1))%)")
-    println("  DTS* steered:   $(c.n_with)/$(length(cond_seqs)) sequences with >7 Cys ($(round(c.frac*100, digits=1))%)")
-    println()
-
     mean_u = round(sum(u.cys_counts) / length(u.cys_counts), digits=2)
     mean_c = round(sum(c.cys_counts) / length(c.cys_counts), digits=2)
+
+    println("\n" * "="^60)
+    println("       Cysteine Enrichment (Ordinal Reward) Report")
+    println("="^60)
+    println()
     println("  Mean Cys count:")
     println("    Unconditional: $mean_u")
     println("    DTS* steered:  $mean_c")
+    println()
+    println("  Max Cys count:")
+    println("    Unconditional: $(maximum(u.cys_counts))")
+    println("    DTS* steered:  $(maximum(c.cys_counts))")
     println()
 
     # Show top examples
@@ -115,22 +116,25 @@ function make_plot(uncond_seqs, cond_seqs; outfile = joinpath(@__DIR__, "cystein
     u = count_hits(uncond_seqs)
     c = count_hits(cond_seqs)
 
+    mean_u = sum(u.cys_counts) / length(u.cys_counts)
+    mean_c = sum(c.cys_counts) / length(c.cys_counts)
+
     try
         @eval using CairoMakie
 
         fig = Figure(size = (700, 400), fontsize = 14)
 
-        # Bar chart: fraction with >7 Cys
+        # Bar chart: mean Cys count
         ax1 = Axis(fig[1, 1],
-            title = "Sequences with >7 Cys",
-            ylabel = "Fraction",
+            title = "Mean Cysteine Count",
+            ylabel = "Mean # Cys",
             xticks = ([1, 2], ["Unconditional", "DTS*"]),
             ylabelsize = 13,
         )
-        barplot!(ax1, [1, 2], [u.frac, c.frac],
+        barplot!(ax1, [1, 2], [mean_u, mean_c],
             color = [:steelblue, :coral],
             strokewidth = 1, strokecolor = :black)
-        ylims!(ax1, 0, max(c.frac * 1.3, u.frac * 1.3, 0.1))
+        ylims!(ax1, 0, max(mean_c * 1.3, mean_u * 1.3, 1.0))
 
         # Histogram: Cys count per sequence
         ax2 = Axis(fig[1, 2],
@@ -144,25 +148,25 @@ function make_plot(uncond_seqs, cond_seqs; outfile = joinpath(@__DIR__, "cystein
         bins = -0.5:1:(max_count + 0.5)
         hist!(ax2, u.cys_counts, bins = bins, color = (:steelblue, 0.6), label = "Unconditional", strokewidth = 1)
         hist!(ax2, c.cys_counts, bins = bins, color = (:coral, 0.6), label = "DTS*", strokewidth = 1)
-        vlines!(ax2, [7.5], color = :red, linestyle = :dash, label = "Threshold (>7)")
         axislegend(ax2, position = :rt, framevisible = false)
 
         save(outfile, fig, px_per_unit = 2)
         println("\nPlot saved to: $outfile")
     catch e
         println("\n(CairoMakie not available: $e)")
-        println("\n  Fraction with >7 Cys:")
+        println("\n  Mean Cys count:")
         n = 40
-        u_bar = round(Int, u.frac * n)
-        c_bar = round(Int, c.frac * n)
-        println("    Uncond  |$("█"^u_bar)$("░"^(n-u_bar))| $(round(u.frac*100, digits=1))%")
-        println("    DTS*    |$("█"^c_bar)$("░"^(n-c_bar))| $(round(c.frac*100, digits=1))%")
+        scale = max(mean_u, mean_c, 1.0)
+        u_bar = round(Int, mean_u / scale * n)
+        c_bar = round(Int, mean_c / scale * n)
+        println("    Uncond  |$("█"^u_bar)$("░"^(n-u_bar))| $(round(mean_u, digits=2))")
+        println("    DTS*    |$("█"^c_bar)$("░"^(n-c_bar))| $(round(mean_c, digits=2))")
     end
 end
 
 # ─── Main ────────────────────────────────────────────────────────────────────
 
-println("Cysteine enrichment steering experiment (CPU, 20 samples, 30 steps)")
+println("Cysteine enrichment steering experiment — ordinal reward (CPU, 20 samples, 30 steps)")
 uncond, cond = generate_samples()
 print_report(uncond, cond)
 make_plot(uncond, cond)
